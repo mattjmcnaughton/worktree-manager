@@ -1,0 +1,17 @@
+# Build output
+bin/
+dist/
+
+# OS
+.DS_Store
+
+# Environment
+.env
+
+# Go
+*.exe
+*.test
+vendor/
+
+# Agent workspace
+.agentic/
