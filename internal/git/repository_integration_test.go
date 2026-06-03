@@ -95,7 +95,7 @@ func TestHasUnpushedCommitsNoUpstream(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	got, err := repo.HasUnpushedCommits(repoDir)
+	got, err := repo.HasUnpushedCommits(repoDir, "")
 	if err != nil {
 		t.Fatalf("HasUnpushedCommits: %v", err)
 	}

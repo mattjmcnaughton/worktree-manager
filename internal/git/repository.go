@@ -134,15 +134,22 @@ func (r *Repository) HasUncommittedChanges(worktreePath string) (bool, error) {
 }
 
 // HasUnpushedCommits reports whether commits exist ahead of upstream.
-// If no upstream is configured, returns true (treat as unpushed).
-func (r *Repository) HasUnpushedCommits(worktreePath string) (bool, error) {
-	if _, err := runGit(worktreePath, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"); err != nil {
-		// No upstream — caller treats as unpushed.
+// When no upstream is configured, falls back to commits between fallbackRef
+// and HEAD; if fallbackRef is empty, returns true conservatively.
+func (r *Repository) HasUnpushedCommits(worktreePath, fallbackRef string) (bool, error) {
+	if _, err := runGit(worktreePath, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"); err == nil {
+		out, err := runGit(worktreePath, "log", "@{upstream}..HEAD", "--oneline")
+		if err != nil {
+			return false, fmt.Errorf("git log @{upstream}..HEAD: %w", err)
+		}
+		return strings.TrimSpace(out) != "", nil
+	}
+	if fallbackRef == "" {
 		return true, nil
 	}
-	out, err := runGit(worktreePath, "log", "@{upstream}..HEAD", "--oneline")
+	out, err := runGit(worktreePath, "log", fallbackRef+"..HEAD", "--oneline")
 	if err != nil {
-		return false, fmt.Errorf("git log @{upstream}..HEAD: %w", err)
+		return true, nil
 	}
 	return strings.TrimSpace(out) != "", nil
 }
