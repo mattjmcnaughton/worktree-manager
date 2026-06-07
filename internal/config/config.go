@@ -21,7 +21,6 @@ type Config struct {
 	Version  string   `yaml:"version,omitempty"`
 	Defaults Defaults `yaml:"defaults,omitempty"`
 	Agentic  Agentic  `yaml:"agentic,omitempty"`
-	Context  Context  `yaml:"context,omitempty"`
 	Hooks    Hooks    `yaml:"hooks,omitempty"`
 }
 
@@ -33,28 +32,27 @@ type Defaults struct {
 	User             string `yaml:"user,omitempty"`
 }
 
+// UnmarshalYAML accepts `base_dir` as an alias for `worktree_base_dir` so
+// existing wtp (.wtp.yml) configurations parse without modification.
+func (d *Defaults) UnmarshalYAML(node *yaml.Node) error {
+	type raw Defaults
+	aux := struct {
+		*raw    `yaml:",inline"`
+		BaseDir string `yaml:"base_dir,omitempty"`
+	}{raw: (*raw)(d)}
+	if err := node.Decode(&aux); err != nil {
+		return err
+	}
+	if d.WorktreeBaseDir == "" && aux.BaseDir != "" {
+		d.WorktreeBaseDir = aux.BaseDir
+	}
+	return nil
+}
+
 type Agentic struct {
 	Enabled             bool   `yaml:"enabled,omitempty"`
 	WorkspaceDir        string `yaml:"workspace_dir,omitempty"`
 	CreateTaskWorkspace bool   `yaml:"create_task_workspace,omitempty"`
-}
-
-type Context struct {
-	Enabled        bool            `yaml:"enabled,omitempty"`
-	FetchOnCreate  bool            `yaml:"fetch_on_create,omitempty"`
-	SourcesDir     string          `yaml:"sources_dir,omitempty"`
-	UpdateExisting bool            `yaml:"update_existing,omitempty"`
-	Sources        []ContextSource `yaml:"sources,omitempty"`
-}
-
-type ContextSource struct {
-	Name           string `yaml:"name"`
-	Repo           string `yaml:"repo,omitempty"`
-	Ref            string `yaml:"ref,omitempty"`
-	Depth          int    `yaml:"depth,omitempty"`
-	Required       bool   `yaml:"required,omitempty"`
-	UpdateExisting *bool  `yaml:"update_existing,omitempty"`
-	Disabled       bool   `yaml:"disabled,omitempty"`
 }
 
 type Hooks struct {
@@ -122,7 +120,6 @@ func mergeConfigs(global, repo *Config) *Config {
 	}
 	out.Defaults = mergeDefaults(global.Defaults, repo.Defaults)
 	out.Agentic = mergeAgentic(global.Agentic, repo.Agentic)
-	out.Context = mergeContext(global.Context, repo.Context)
 	out.Hooks = mergeHooks(global.Hooks, repo.Hooks)
 
 	return &out
@@ -162,66 +159,6 @@ func mergeAgentic(g, r Agentic) Agentic {
 	return out
 }
 
-func mergeContext(g, r Context) Context {
-	out := g
-	if r.Enabled {
-		out.Enabled = true
-	}
-	if r.FetchOnCreate {
-		out.FetchOnCreate = true
-	}
-	if r.SourcesDir != "" {
-		out.SourcesDir = r.SourcesDir
-	}
-	if r.UpdateExisting {
-		out.UpdateExisting = true
-	}
-	out.Sources = mergeContextSources(g.Sources, r.Sources)
-	return out
-}
-
-func mergeContextSources(global, repo []ContextSource) []ContextSource {
-	indexByName := make(map[string]int)
-	out := make([]ContextSource, 0, len(global)+len(repo))
-	for _, src := range global {
-		indexByName[src.Name] = len(out)
-		out = append(out, src)
-	}
-	for _, src := range repo {
-		if idx, ok := indexByName[src.Name]; ok {
-			out[idx] = mergeContextSource(out[idx], src)
-			continue
-		}
-		indexByName[src.Name] = len(out)
-		out = append(out, src)
-	}
-	return out
-}
-
-func mergeContextSource(g, r ContextSource) ContextSource {
-	out := g
-	out.Name = r.Name
-	if r.Repo != "" {
-		out.Repo = r.Repo
-	}
-	if r.Ref != "" {
-		out.Ref = r.Ref
-	}
-	if r.Depth != 0 {
-		out.Depth = r.Depth
-	}
-	if r.Required {
-		out.Required = true
-	}
-	if r.UpdateExisting != nil {
-		out.UpdateExisting = r.UpdateExisting
-	}
-	if r.Disabled {
-		out.Disabled = true
-	}
-	return out
-}
-
 func mergeHooks(g, r Hooks) Hooks {
 	out := g
 	if len(r.PreCreate) > 0 {
@@ -254,9 +191,6 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Agentic.WorkspaceDir == "" {
 		c.Agentic.WorkspaceDir = ".agentic"
-	}
-	if c.Context.SourcesDir == "" {
-		c.Context.SourcesDir = ".agentic/sources"
 	}
 }
 

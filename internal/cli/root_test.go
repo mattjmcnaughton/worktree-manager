@@ -33,7 +33,7 @@ func TestDeferredCommandsAreNotRegistered(t *testing.T) {
 		got[c.Name()] = true
 	}
 
-	for _, deferred := range []string{"status", "exec", "context"} {
+	for _, deferred := range []string{"status", "exec"} {
 		if got[deferred] {
 			t.Errorf("command %q should not be exposed in this slice; remove until implemented", deferred)
 		}

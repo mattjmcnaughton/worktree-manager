@@ -27,9 +27,6 @@ func TestLoadAppliesDefaultsWhenBothFilesMissing(t *testing.T) {
 	if cfg.Agentic.WorkspaceDir != ".agentic" {
 		t.Errorf("Agentic.WorkspaceDir = %q, want %q", cfg.Agentic.WorkspaceDir, ".agentic")
 	}
-	if cfg.Context.SourcesDir != ".agentic/sources" {
-		t.Errorf("Context.SourcesDir = %q, want %q", cfg.Context.SourcesDir, ".agentic/sources")
-	}
 }
 
 func TestLoadRepoOverridesGlobal(t *testing.T) {
@@ -70,58 +67,6 @@ agentic:
 	}
 }
 
-func TestLoadMergesContextSourcesByName(t *testing.T) {
-	dir := t.TempDir()
-	globalPath := filepath.Join(dir, "global.yml")
-	repoPath := filepath.Join(dir, "repo.yml")
-
-	writeFile(t, globalPath, `version: "1.0"
-context:
-  enabled: true
-  sources:
-    - name: skills
-      repo: mattjmcnaughton/skills
-      ref: main
-    - name: wtp
-      repo: satococoa/wtp
-      ref: main
-`)
-	writeFile(t, repoPath, `version: "1.0"
-context:
-  sources:
-    - name: wtp
-      ref: v0.5.0
-    - name: extra
-      repo: example/extra
-`)
-
-	cfg, err := Load(globalPath, repoPath)
-	if err != nil {
-		t.Fatalf("Load returned error: %v", err)
-	}
-
-	bySrc := make(map[string]ContextSource)
-	for _, s := range cfg.Context.Sources {
-		bySrc[s.Name] = s
-	}
-
-	if len(bySrc) != 3 {
-		t.Fatalf("expected 3 merged sources, got %d (%v)", len(bySrc), bySrc)
-	}
-	if bySrc["skills"].Repo != "mattjmcnaughton/skills" {
-		t.Errorf("skills.Repo not preserved: %+v", bySrc["skills"])
-	}
-	if bySrc["wtp"].Ref != "v0.5.0" {
-		t.Errorf("wtp.Ref not overridden: %+v", bySrc["wtp"])
-	}
-	if bySrc["wtp"].Repo != "satococoa/wtp" {
-		t.Errorf("wtp.Repo not inherited from global: %+v", bySrc["wtp"])
-	}
-	if bySrc["extra"].Repo != "example/extra" {
-		t.Errorf("extra source not added: %+v", bySrc["extra"])
-	}
-}
-
 func TestValidateRejectsBadHooks(t *testing.T) {
 	cases := []struct {
 		name string
@@ -152,6 +97,57 @@ func TestValidateAcceptsGoodHooks(t *testing.T) {
 	}}
 	if err := cfg.Validate(); err != nil {
 		t.Errorf("expected valid config to pass; got %v", err)
+	}
+}
+
+func TestLoadParsesWtpConfig(t *testing.T) {
+	dir := t.TempDir()
+	repoPath := filepath.Join(dir, ".wtp.yml")
+	writeFile(t, repoPath, `version: "1.0"
+defaults:
+  base_dir: "../worktrees"
+hooks:
+  post_create:
+    - type: copy
+      from: ".env"
+      to: ".env"
+    - type: copy
+      from: ".claude"
+    - type: symlink
+      from: ".bin"
+      to: ".bin"
+    - type: command
+      command: "npm install"
+      env:
+        NODE_ENV: "development"
+`)
+
+	cfg, err := Load("", repoPath)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if cfg.Defaults.WorktreeBaseDir != "../worktrees" {
+		t.Errorf("Defaults.WorktreeBaseDir = %q, want %q (from base_dir alias)", cfg.Defaults.WorktreeBaseDir, "../worktrees")
+	}
+	if got := len(cfg.Hooks.PostCreate); got != 4 {
+		t.Fatalf("PostCreate hook count = %d, want 4", got)
+	}
+}
+
+func TestDefaultsBaseDirAliasYieldsToCanonicalKey(t *testing.T) {
+	dir := t.TempDir()
+	repoPath := filepath.Join(dir, "repo.yml")
+	writeFile(t, repoPath, `defaults:
+  base_dir: "../wtp-style"
+  worktree_base_dir: ".native"
+`)
+
+	cfg, err := Load("", repoPath)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if cfg.Defaults.WorktreeBaseDir != ".native" {
+		t.Errorf("Defaults.WorktreeBaseDir = %q, want %q (canonical key wins)", cfg.Defaults.WorktreeBaseDir, ".native")
 	}
 }
 

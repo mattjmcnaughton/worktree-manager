@@ -38,6 +38,35 @@ func TestRunCopyHookCopiesFile(t *testing.T) {
 	}
 }
 
+func TestRunCopyHookCopiesDirectoryRecursively(t *testing.T) {
+	main := t.TempDir()
+	worktree := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(main, ".claude", "nested"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(main, ".claude", "top.md"), []byte("top\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(main, ".claude", "nested", "deep.md"), []byte("deep\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.Config{Hooks: config.Hooks{PostCreate: []config.Hook{
+		{Type: "copy", From: ".claude"},
+	}}}
+	exec := NewExecutor(cfg, main)
+
+	var buf bytes.Buffer
+	if err := exec.Run(PhasePostCreate, Context{WorktreePath: worktree, MainPath: main}, &buf); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	for _, rel := range []string{".claude/top.md", ".claude/nested/deep.md"} {
+		if _, err := os.Stat(filepath.Join(worktree, rel)); err != nil {
+			t.Errorf("expected %s under worktree: %v", rel, err)
+		}
+	}
+}
+
 func TestRunCopyHookOptionalSkipsMissingSource(t *testing.T) {
 	main := t.TempDir()
 	worktree := t.TempDir()

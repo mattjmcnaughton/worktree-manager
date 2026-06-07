@@ -109,8 +109,20 @@ func (e *Executor) runCopy(h config.Hook, ctx Context, w io.Writer) error {
 		return fmt.Errorf("source %s: %w", src, err)
 	}
 	if info.IsDir() {
-		return fmt.Errorf("copy of directories is not supported (%s)", src)
+		if err := copyDir(src, dst); err != nil {
+			return fmt.Errorf("copy dir %s -> %s: %w", src, dst, err)
+		}
+		fmt.Fprintf(w, "   copy %s -> %s (dir)\n", src, dst)
+		return nil
 	}
+	if err := copyFile(src, dst, info.Mode().Perm()); err != nil {
+		return err
+	}
+	fmt.Fprintf(w, "   copy %s -> %s\n", src, dst)
+	return nil
+}
+
+func copyFile(src, dst string, mode os.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return fmt.Errorf("mkdir %s: %w", filepath.Dir(dst), err)
 	}
@@ -118,10 +130,50 @@ func (e *Executor) runCopy(h config.Hook, ctx Context, w io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("read %s: %w", src, err)
 	}
-	if err := os.WriteFile(dst, data, info.Mode().Perm()); err != nil {
+	if err := os.WriteFile(dst, data, mode); err != nil {
 		return fmt.Errorf("write %s: %w", dst, err)
 	}
-	fmt.Fprintf(w, "   copy %s -> %s\n", src, dst)
+	return nil
+}
+
+func copyDir(src, dst string) error {
+	srcInfo, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dst, srcInfo.Mode().Perm()); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		sp := filepath.Join(src, entry.Name())
+		dp := filepath.Join(dst, entry.Name())
+		switch {
+		case entry.IsDir():
+			if err := copyDir(sp, dp); err != nil {
+				return err
+			}
+		case entry.Type()&os.ModeSymlink != 0:
+			target, err := os.Readlink(sp)
+			if err != nil {
+				return fmt.Errorf("readlink %s: %w", sp, err)
+			}
+			if err := os.Symlink(target, dp); err != nil {
+				return fmt.Errorf("symlink %s -> %s: %w", dp, target, err)
+			}
+		default:
+			info, err := entry.Info()
+			if err != nil {
+				return err
+			}
+			if err := copyFile(sp, dp, info.Mode().Perm()); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 
