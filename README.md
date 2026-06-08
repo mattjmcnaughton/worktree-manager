@@ -215,6 +215,103 @@ hooks:
       work_dir: "main"
 ```
 
+## wtp compatibility
+
+`worktree-manager` is **configuration-compatible** with [`satococoa/wtp`](https://github.com/satococoa/wtp): a valid `.wtp.yml` parses without modification when read as a `worktree-manager` repo config. Compatibility is scoped to the config file format, not the CLI surface.
+
+### What is compatible
+
+- **File schema.** Top-level `version`, `defaults`, and `hooks` keys match.
+- **`defaults.base_dir`.** Accepted as an alias for `defaults.worktree_base_dir`. If both are set, the canonical `worktree_base_dir` wins.
+- **Hook types.** `copy`, `symlink`, and `command` use the same field names (`from`, `to`, `command`, `env`, `work_dir`) and the same semantics:
+  - `copy` and `symlink` resolve `from` relative to the **main** worktree and `to` relative to the **new** worktree; `to` defaults to `from` when omitted.
+  - `copy` recurses into directories and preserves intra-tree symlinks.
+  - `command` runs through `sh -c` with `env` merged into the process environment.
+- **`post_create` phase.** wtp's only hook phase is supported as-is.
+
+### What is extended
+
+`worktree-manager` adds keys that wtp does not recognize. These are no-ops for wtp but active here:
+
+- Additional hook phases: `pre_create`, `pre_delete`, `post_delete`.
+- Per-hook `name` (label in logs) and `optional` (failures are warned and skipped).
+- `defaults.base`, `defaults.branch_template`, `defaults.worktree_template`, `defaults.user`.
+- The `agentic` block for `.agentic/<slug>/` workspace creation.
+- Hook environment variables prefixed `WORKTREE_MANAGER_*` (see [Hooks](#hooks)).
+
+### What is not compatible
+
+- **Config file discovery.** `worktree-manager` reads `<repo>/.worktree-manager.yml`, not `.wtp.yml`. To reuse an existing wtp config, rename or symlink it:
+  ```sh
+  ln -s .wtp.yml .worktree-manager.yml
+  ```
+- **CLI surface.** wtp is branch-oriented (`wtp add feature/auth`, `wtp remove`, `wtp cd`). `worktree-manager` is slug-oriented (`worktree-manager create "add semantic indexing"`, `worktree-manager delete <slug>`, `worktree-manager cd <slug>`). Branch and worktree paths are derived from templates rather than from the branch name directly.
+- **Shell integration.** `wtp shell-init` / `wtp hook` and lazy completion bootstrapping are wtp-specific and have no equivalent here yet.
+
+### Using an existing `.wtp.yml`
+
+Given a typical wtp config:
+
+```yaml
+version: "1.0"
+defaults:
+  base_dir: "../worktrees"
+hooks:
+  post_create:
+    - type: copy
+      from: ".env"
+      to: ".env"
+    - type: command
+      command: "npm install"
+```
+
+**As-is, the file is ignored.** `worktree-manager` only reads `<repo>/.worktree-manager.yml`, so a bare `.wtp.yml` has no effect and the CLI falls back to defaults.
+
+**Once symlinked or renamed**, the file loads and `worktree-manager create "add auth"` does roughly this:
+
+1. **Load and merge defaults.** `base_dir: "../worktrees"` is read as `worktree_base_dir` via the alias. Unset keys fall back: `base="main"`, `branch_template="{{ user }}/{{ slug }}"`, `worktree_template="{{ repo }}-{{ slug }}"`. `agentic` is disabled.
+2. **Backfill `user`.** Empty `defaults.user` is filled from `git config user.name`, slug-normalized (e.g. `Jane Doe` → `jane-doe`).
+3. **Derive the slug.** `"add auth"` becomes `add-auth`.
+4. **Resolve paths.** With repo `myrepo`:
+   - branch: `jane-doe/add-auth` (from the default template, not from your file)
+   - worktree: `../worktrees/myrepo-add-auth`
+5. **Create.** Runs `pre_create` hooks (none here), then `git worktree add` with the resolved branch and `base="main"`.
+6. **Run `post_create` hooks.** Identical semantics to wtp: `copy .env` reads from the main worktree and writes into the new worktree; `npm install` runs via `sh -c` in the new worktree with `WORKTREE_MANAGER_*` env vars added to the parent environment.
+7. **Record task metadata** in `.worktree-manager/tasks/add-auth.json`.
+
+#### What differs from wtp's workflow
+
+Even with the file loaded, the surface behavior is slug-driven, not branch-driven:
+
+| Aspect | wtp | `worktree-manager` with the same file |
+| --- | --- | --- |
+| Invocation | `wtp add feature/auth` (you name the branch) | `worktree-manager create "..."` (slug → branch via template) |
+| Branch name | `feature/auth` verbatim | `<user>/<slug>` from `branch_template` |
+| Worktree leaf dir | mirrors branch: `feature/auth/` | `<repo>-<slug>` (flat) |
+| `post_create` hooks | run identically | run identically |
+| `cd` / `delete` target | branch name | slug |
+
+#### Closer parity with one shared file
+
+To get wtp-style paths while keeping the file usable by both tools, override the templates. wtp ignores the unknown keys; `worktree-manager` honors them:
+
+```yaml
+version: "1.0"
+defaults:
+  base_dir: "../worktrees"
+  branch_template: "{{ slug }}"       # ignored by wtp, used here
+  worktree_template: "{{ slug }}"     # ignored by wtp, used here
+hooks:
+  post_create:
+    - type: copy
+      from: ".env"
+      to: ".env"
+    - type: command
+      command: "npm install"
+```
+
+With this, the resolved branch is just `add-auth` and the worktree lives at `../worktrees/add-auth`, matching wtp's layout.
+
 ## Hooks
 
 Hooks are planned for worktree lifecycle phases:
@@ -276,6 +373,14 @@ Current environment variables:
 | `WORKTREE_MANAGER_LOG_LEVEL` | `info` | Log level (`debug`, `info`, `warn`, `error`) |
 
 ## Installation
+
+Homebrew (macOS and Linux):
+
+```sh
+brew install mattjmcnaughton/tap/worktree-manager
+```
+
+With Go:
 
 ```sh
 go install github.com/mattjmcnaughton/worktree-manager/cmd/worktree-manager@latest

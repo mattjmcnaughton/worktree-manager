@@ -13,5 +13,8 @@ dist/
 *.test
 vendor/
 
+# Node (semantic-release tooling)
+node_modules/
+
 # Agent workspace
 .agentic/
