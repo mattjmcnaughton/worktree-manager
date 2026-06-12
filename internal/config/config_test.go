@@ -8,7 +8,7 @@ import (
 
 func TestLoadAppliesDefaultsWhenBothFilesMissing(t *testing.T) {
 	dir := t.TempDir()
-	cfg, err := Load(filepath.Join(dir, "global.yml"), filepath.Join(dir, "repo.yml"))
+	cfg, err := Load(filepath.Join(dir, "global.yml"), filepath.Join(dir, "repo.yml"), "")
 	if err != nil {
 		t.Fatalf("Load returned error: %v", err)
 	}
@@ -49,7 +49,7 @@ agentic:
   create_task_workspace: true
 `)
 
-	cfg, err := Load(globalPath, repoPath)
+	cfg, err := Load(globalPath, repoPath, "")
 	if err != nil {
 		t.Fatalf("Load returned error: %v", err)
 	}
@@ -122,7 +122,7 @@ hooks:
         NODE_ENV: "development"
 `)
 
-	cfg, err := Load("", repoPath)
+	cfg, err := Load("", repoPath, "")
 	if err != nil {
 		t.Fatalf("Load returned error: %v", err)
 	}
@@ -142,12 +142,81 @@ func TestDefaultsBaseDirAliasYieldsToCanonicalKey(t *testing.T) {
   worktree_base_dir: ".native"
 `)
 
-	cfg, err := Load("", repoPath)
+	cfg, err := Load("", repoPath, "")
 	if err != nil {
 		t.Fatalf("Load returned error: %v", err)
 	}
 	if cfg.Defaults.WorktreeBaseDir != ".native" {
 		t.Errorf("Defaults.WorktreeBaseDir = %q, want %q (canonical key wins)", cfg.Defaults.WorktreeBaseDir, ".native")
+	}
+}
+
+func TestLoadMergesPerRepoOverride(t *testing.T) {
+	dir := t.TempDir()
+	repoRoot := filepath.Join(dir, "myrepo")
+	if err := os.MkdirAll(repoRoot, 0o755); err != nil {
+		t.Fatalf("mkdir repoRoot: %v", err)
+	}
+	globalPath := filepath.Join(dir, "global.yml")
+
+	writeFile(t, globalPath, `version: "1.0"
+defaults:
+  base: develop
+  user: globaluser
+  branch_template: "{{ user }}/{{ slug }}"
+repos:
+  `+repoRoot+`:
+    defaults:
+      user: matt
+      base: feature
+`)
+
+	cfg, err := Load(globalPath, "", repoRoot)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if cfg.Defaults.User != "matt" {
+		t.Errorf("Defaults.User = %q, want %q (per-repo override)", cfg.Defaults.User, "matt")
+	}
+	if cfg.Defaults.Base != "feature" {
+		t.Errorf("Defaults.Base = %q, want %q (per-repo override)", cfg.Defaults.Base, "feature")
+	}
+	if cfg.Defaults.BranchTemplate != "{{ user }}/{{ slug }}" {
+		t.Errorf("Defaults.BranchTemplate = %q, want %q (inherited from global defaults)", cfg.Defaults.BranchTemplate, "{{ user }}/{{ slug }}")
+	}
+	if cfg.Repos != nil {
+		t.Errorf("merged Config.Repos = %v, want nil (only meaningful pre-merge)", cfg.Repos)
+	}
+}
+
+func TestLoadRepoConfigWinsOverPerRepoOverride(t *testing.T) {
+	dir := t.TempDir()
+	repoRoot := filepath.Join(dir, "myrepo")
+	if err := os.MkdirAll(repoRoot, 0o755); err != nil {
+		t.Fatalf("mkdir repoRoot: %v", err)
+	}
+	globalPath := filepath.Join(dir, "global.yml")
+	repoPath := filepath.Join(repoRoot, ".worktree-manager.yml")
+
+	writeFile(t, globalPath, `repos:
+  `+repoRoot+`:
+    defaults:
+      user: from-override
+      base: from-override
+`)
+	writeFile(t, repoPath, `defaults:
+  user: from-repo
+`)
+
+	cfg, err := Load(globalPath, repoPath, repoRoot)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if cfg.Defaults.User != "from-repo" {
+		t.Errorf("Defaults.User = %q, want %q (repo file wins)", cfg.Defaults.User, "from-repo")
+	}
+	if cfg.Defaults.Base != "from-override" {
+		t.Errorf("Defaults.Base = %q, want %q (override fills when repo file is silent)", cfg.Defaults.Base, "from-override")
 	}
 }
 

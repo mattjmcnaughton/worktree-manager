@@ -1,6 +1,7 @@
 package task
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,6 +9,7 @@ import (
 )
 
 func TestStoreRoundTrip(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	repoRoot := t.TempDir()
 	store := NewStore(repoRoot)
 
@@ -50,48 +52,72 @@ func TestStoreRoundTrip(t *testing.T) {
 }
 
 func TestGetReturnsErrNotFound(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	store := NewStore(t.TempDir())
 	if _, err := store.Get("missing"); err == nil {
 		t.Errorf("expected error for missing task")
 	}
 }
 
-func TestEnsureGitignoreAppendIdempotent(t *testing.T) {
+func TestSaveWritesUnderXDGStateHomeWithSidecar(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", stateDir)
 	repoRoot := t.TempDir()
-	gitignore := filepath.Join(repoRoot, ".gitignore")
-	if err := os.WriteFile(gitignore, []byte("bin/\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
 	store := NewStore(repoRoot)
-	if err := store.EnsureGitignore(); err != nil {
-		t.Fatalf("EnsureGitignore: %v", err)
-	}
-	if err := store.EnsureGitignore(); err != nil {
-		t.Fatalf("EnsureGitignore (second call): %v", err)
+
+	if err := store.Save(&Task{Slug: "alpha", Branch: "u/alpha", WorktreePath: "/tmp/alpha"}); err != nil {
+		t.Fatalf("Save: %v", err)
 	}
 
-	data, err := os.ReadFile(gitignore)
+	repoDir, err := store.RepoDir()
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("RepoDir: %v", err)
 	}
-	count := strings.Count(string(data), ".worktree-manager/")
-	if count != 1 {
-		t.Errorf("expected .worktree-manager/ to appear once, found %d times in:\n%s", count, data)
+	if !strings.HasPrefix(repoDir, stateDir) {
+		t.Errorf("repo dir %q should live under XDG state home %q", repoDir, stateDir)
+	}
+	if !strings.Contains(repoDir, filepath.Join("worktree-manager", "repos")) {
+		t.Errorf("repo dir %q should sit under worktree-manager/repos/", repoDir)
+	}
+
+	taskPath := filepath.Join(repoDir, "tasks", "alpha.json")
+	if _, err := os.Stat(taskPath); err != nil {
+		t.Errorf("expected task file at %s: %v", taskPath, err)
+	}
+
+	sidecar := filepath.Join(repoDir, "repo.json")
+	data, err := os.ReadFile(sidecar)
+	if err != nil {
+		t.Fatalf("read sidecar: %v", err)
+	}
+	var payload struct {
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatalf("parse sidecar: %v", err)
+	}
+	wantPath, err := filepath.EvalSymlinks(repoRoot)
+	if err != nil {
+		wantPath = repoRoot
+	}
+	if payload.Path != wantPath {
+		t.Errorf("sidecar path = %q, want %q", payload.Path, wantPath)
 	}
 }
 
-func TestEnsureGitignoreCreatesFileIfMissing(t *testing.T) {
+func TestSaveDoesNotWriteIntoRepoRoot(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	repoRoot := t.TempDir()
 	store := NewStore(repoRoot)
-	if err := store.EnsureGitignore(); err != nil {
-		t.Fatalf("EnsureGitignore: %v", err)
+
+	if err := store.Save(&Task{Slug: "beta", Branch: "u/beta", WorktreePath: "/tmp/beta"}); err != nil {
+		t.Fatalf("Save: %v", err)
 	}
-	data, err := os.ReadFile(filepath.Join(repoRoot, ".gitignore"))
-	if err != nil {
-		t.Fatalf("expected .gitignore created: %v", err)
+
+	if _, err := os.Stat(filepath.Join(repoRoot, ".worktree-manager")); !os.IsNotExist(err) {
+		t.Errorf("expected no .worktree-manager dir inside repo; stat err=%v", err)
 	}
-	if !strings.Contains(string(data), ".worktree-manager/") {
-		t.Errorf("expected .gitignore to contain .worktree-manager/, got:\n%s", data)
+	if _, err := os.Stat(filepath.Join(repoRoot, ".gitignore")); !os.IsNotExist(err) {
+		t.Errorf("expected no .gitignore written to repo root; stat err=%v", err)
 	}
 }

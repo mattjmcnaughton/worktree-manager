@@ -2,7 +2,7 @@
 
 `worktree-manager` is a Go CLI for managing Git worktrees as task-oriented development environments.
 
-> **Status:** early scaffold. The current binary exposes the root command and an `example` command only. The workflow below is the intended product direction and implementation plan, inspired by the agentic worktree skills in `mattjmcnaughton/skills` and by [`satococoa/wtp`](https://github.com/satococoa/wtp).
+> **Status:** in progress. The binary currently implements `create`, `delete`, `list`, `pwd`, `shell`, and `tmux`. Other commands described below (`status`, `exec`, `list --json`) are still planned. The overall direction is inspired by the agentic worktree skills in `mattjmcnaughton/skills` and by [`satococoa/wtp`](https://github.com/satococoa/wtp).
 
 ## Why
 
@@ -29,7 +29,7 @@ Required:
 
 Optional:
   .agentic/<slug>/ task workspace
-  .worktree-manager/tasks/<slug>.json local task metadata
+  $XDG_STATE_HOME/worktree-manager/repos/<sha8>/tasks/<slug>.json runtime metadata
 ```
 
 The first-class identifier is the task **slug**, not just the branch name.
@@ -40,10 +40,6 @@ Example intended layout:
 <repo>/
   .worktree-manager.yml        # tracked repo config
 
-  .worktree-manager/           # local runtime state, ignored
-    tasks/
-      add-semantic-indexing.json
-
   .agentic/                    # optional, ignored
     add-semantic-indexing/     # optional task workspace
       metadata.json
@@ -53,6 +49,12 @@ Example intended layout:
 
   .worktrees/                  # local worktrees, ignored or outside repo
     worktree-manager-add-semantic-indexing/
+
+$XDG_STATE_HOME/worktree-manager/
+  repos/<sha8>/                # one dir per managed repo (sha8 of resolved root)
+    repo.json                  # sidecar pointing back at the repo root
+    tasks/
+      add-semantic-indexing.json
 ```
 
 ## Planned workflow
@@ -119,10 +121,12 @@ worktree-manager list --json
 worktree-manager status add-semantic-indexing
 worktree-manager status --current
 worktree-manager exec add-semantic-indexing -- just gate
-cd "$(worktree-manager cd add-semantic-indexing)"
+cd "$(worktree-manager pwd add-semantic-indexing)"
+worktree-manager shell add-semantic-indexing
+worktree-manager tmux add-semantic-indexing
 ```
 
-These commands are planned. They will resolve worktrees by managed slug and task metadata.
+`list`, `pwd`, `shell`, and `tmux` are implemented today. `status`, `exec`, and `list --json` are still planned. All commands resolve worktrees by managed slug and task metadata.
 
 ## Optional agent workspace
 
@@ -151,7 +155,7 @@ When enabled, the task workspace is intended to hold agent lifecycle files such 
 .agentic/<slug>/review.md
 ```
 
-When disabled, the worktree can still be managed using local runtime metadata under `.worktree-manager/tasks/`.
+When disabled, the worktree can still be managed using the runtime metadata stored under `${XDG_STATE_HOME:-~/.local/state}/worktree-manager/repos/<sha8>/tasks/` (outside the repo, so nothing needs to be gitignored).
 
 ## Configuration
 
@@ -159,16 +163,20 @@ When disabled, the worktree can still be managed using local runtime metadata un
 
 ```text
 Global:
-  ~/.config/worktree-manager/config.yml
+  ${XDG_CONFIG_HOME:-~/.config}/worktree-manager/config.yml
 
 Repo:
   <repo>/.worktree-manager.yml
 ```
 
+The global file may also declare a `repos:` map keyed by absolute repo
+root; entries are layered between the global defaults and the
+repo-local file (see the precedence table below).
+
 Precedence:
 
 ```text
-CLI flags > repo config > global config > defaults
+CLI flags > repo config (.worktree-manager.yml) > global repos[<root>] > global defaults
 ```
 
 Example repo config:
@@ -245,7 +253,7 @@ hooks:
   ```sh
   ln -s .wtp.yml .worktree-manager.yml
   ```
-- **CLI surface.** wtp is branch-oriented (`wtp add feature/auth`, `wtp remove`, `wtp cd`). `worktree-manager` is slug-oriented (`worktree-manager create "add semantic indexing"`, `worktree-manager delete <slug>`, `worktree-manager cd <slug>`). Branch and worktree paths are derived from templates rather than from the branch name directly.
+- **CLI surface.** wtp is branch-oriented (`wtp add feature/auth`, `wtp remove`, `wtp cd`). `worktree-manager` is slug-oriented (`worktree-manager create "add semantic indexing"`, `worktree-manager delete <slug>`, `worktree-manager pwd <slug>`). Branch and worktree paths are derived from templates rather than from the branch name directly.
 - **Shell integration.** `wtp shell-init` / `wtp hook` and lazy completion bootstrapping are wtp-specific and have no equivalent here yet.
 
 ### Using an existing `.wtp.yml`
@@ -270,14 +278,14 @@ hooks:
 **Once symlinked or renamed**, the file loads and `worktree-manager create "add auth"` does roughly this:
 
 1. **Load and merge defaults.** `base_dir: "../worktrees"` is read as `worktree_base_dir` via the alias. Unset keys fall back: `base="main"`, `branch_template="{{ user }}/{{ slug }}"`, `worktree_template="{{ repo }}-{{ slug }}"`. `agentic` is disabled.
-2. **Backfill `user`.** Empty `defaults.user` is filled from `git config user.name`, slug-normalized (e.g. `Jane Doe` → `jane-doe`).
+2. **Backfill `user`.** Empty `defaults.user` is filled from `$USER` (falling back to `os/user.Current().Username`), slug-normalized (e.g. `Jane Doe` → `jane-doe`).
 3. **Derive the slug.** `"add auth"` becomes `add-auth`.
 4. **Resolve paths.** With repo `myrepo`:
    - branch: `jane-doe/add-auth` (from the default template, not from your file)
    - worktree: `../worktrees/myrepo-add-auth`
 5. **Create.** Runs `pre_create` hooks (none here), then `git worktree add` with the resolved branch and `base="main"`.
 6. **Run `post_create` hooks.** Identical semantics to wtp: `copy .env` reads from the main worktree and writes into the new worktree; `npm install` runs via `sh -c` in the new worktree with `WORKTREE_MANAGER_*` env vars added to the parent environment.
-7. **Record task metadata** in `.worktree-manager/tasks/add-auth.json`.
+7. **Record task metadata** under `${XDG_STATE_HOME:-~/.local/state}/worktree-manager/repos/<sha8>/tasks/add-auth.json` (alongside a `repo.json` sidecar identifying the source repo). Nothing is written inside the repo itself.
 
 #### What differs from wtp's workflow
 
@@ -289,7 +297,7 @@ Even with the file loaded, the surface behavior is slug-driven, not branch-drive
 | Branch name | `feature/auth` verbatim | `<user>/<slug>` from `branch_template` |
 | Worktree leaf dir | mirrors branch: `feature/auth/` | `<repo>-<slug>` (flat) |
 | `post_create` hooks | run identically | run identically |
-| `cd` / `delete` target | branch name | slug |
+| `pwd` / `shell` / `tmux` / `delete` target | branch name | slug |
 
 #### Closer parity with one shared file
 
@@ -344,6 +352,39 @@ Initial hook types:
     FOO: "bar"
 ```
 
+### Path roots for `copy` and `symlink`
+
+`from` and `to` are interpreted relative to two different anchors so the
+same hook can be reused across every worktree without rewriting paths:
+
+- **`from` is rooted at the main worktree.** It names the source that
+  already exists in your checked-out main branch.
+- **`to` is rooted at the new worktree being created (or, for `pre_delete`
+  / `post_delete`, the one being torn down).** It names where the file
+  or link should appear.
+
+Both fields accept absolute paths verbatim. When `copy`'s `to` is omitted
+it defaults to `from`, so a flat `from: .env` is shorthand for "copy
+`<main>/.env` to `<new-worktree>/.env`".
+
+`copy` recurses into directories and preserves intra-tree symlinks, so
+`from: .claude/` mirrors the entire `.claude/` tree. `symlink` is single-target
+and fails fast if the destination already exists; remove or rename the
+existing file out of band if you want a different layout.
+
+Quick example:
+
+```yaml
+hooks:
+  post_create:
+    - type: copy
+      from: ".env"            # copies <main>/.env -> <new-worktree>/.env
+      to: ".env"
+    - type: symlink
+      from: "node_modules"    # link <main>/node_modules from the new worktree
+      to: "node_modules"
+```
+
 Planned hook environment variables:
 
 ```text
@@ -359,12 +400,26 @@ WORKTREE_MANAGER_PHASE
 
 ## Current usage
 
-The current scaffold supports help, version, completion generation, and an example command:
+The binary currently supports help, version, completion generation, and the following commands:
 
 ```sh
 worktree-manager --help
-worktree-manager example [name]
+
+worktree-manager create "add semantic indexing"
+worktree-manager create --slug AGE-4-add-semantic-indexing
+worktree-manager create "add semantic indexing" --base main --agentic
+
+worktree-manager list
+worktree-manager pwd add-semantic-indexing
+worktree-manager shell add-semantic-indexing
+worktree-manager tmux add-semantic-indexing
+
+worktree-manager delete add-semantic-indexing
+worktree-manager delete --with-branch add-semantic-indexing
+worktree-manager delete --force --force-branch add-semantic-indexing
 ```
+
+`status`, `exec`, and `list --json` are not yet implemented.
 
 Current environment variables:
 

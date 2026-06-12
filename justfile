@@ -1,10 +1,13 @@
+# Directories gofmt should walk (excludes .agentic, vendored skills, etc.)
+fmt_dirs := "cmd internal"
+
 # Check formatting (exits 1 if any files need formatting)
 fmt:
-    @if [ -n "$(gofmt -l .)" ]; then gofmt -l .; exit 1; fi
+    @if [ -n "$(gofmt -l {{fmt_dirs}})" ]; then gofmt -l {{fmt_dirs}}; exit 1; fi
 
 # Fix formatting
 fmt-fix:
-    gofmt -w .
+    gofmt -w {{fmt_dirs}}
 
 # Run go vet
 vet:
@@ -13,6 +16,12 @@ vet:
 # Run unit tests
 test:
     go test ./...
+
+# Run a single test by name regex, optionally narrowed to a package
+# Usage: just test-one TestResolveSystemUser
+#        just test-one TestResolveSystemUser ./internal/cli
+test-one name pkg="./...":
+    go test {{pkg}} -run '{{name}}' -count=1 -v
 
 # Run integration tests
 test-integration:

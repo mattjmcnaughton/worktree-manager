@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"gopkg.in/yaml.v3"
 )
@@ -22,6 +23,10 @@ type Config struct {
 	Defaults Defaults `yaml:"defaults,omitempty"`
 	Agentic  Agentic  `yaml:"agentic,omitempty"`
 	Hooks    Hooks    `yaml:"hooks,omitempty"`
+	// Repos is only meaningful in the global config file. Keys are absolute,
+	// symlink-resolved repo roots; values are layered between the global
+	// defaults and the repo-local `.worktree-manager.yml`.
+	Repos map[string]Config `yaml:"repos,omitempty"`
 }
 
 type Defaults struct {
@@ -73,10 +78,13 @@ type Hook struct {
 	Optional bool              `yaml:"optional,omitempty"`
 }
 
-// Load reads global and repo configuration, merges them (repo wins), applies
-// defaults, and validates the result. Missing files are not an error: each
-// is treated as empty.
-func Load(globalPath, repoPath string) (*Config, error) {
+// Load reads global and repo configuration and merges them into a single
+// config. Precedence (low to high): global defaults < global.repos[<repoRoot>]
+// < repo (.worktree-manager.yml). Missing files are not an error: each is
+// treated as empty. repoRoot, when non-empty, is symlink-resolved before
+// looking it up in global.repos so users with symlinked checkouts get one
+// stable entry.
+func Load(globalPath, repoPath, repoRoot string) (*Config, error) {
 	global, err := readFile(globalPath)
 	if err != nil {
 		return nil, fmt.Errorf("read global config: %w", err)
@@ -86,12 +94,40 @@ func Load(globalPath, repoPath string) (*Config, error) {
 		return nil, fmt.Errorf("read repo config: %w", err)
 	}
 
-	merged := mergeConfigs(global, repo)
+	merged := mergeConfigs(global, repo, repoRoot)
 	merged.applyDefaults()
 	if err := merged.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
 	return merged, nil
+}
+
+// LookupRepoOverride returns the per-repo override block from global, if any,
+// matching repoRoot. Both repoRoot and the YAML keys are canonicalized
+// (absolute + symlink-resolved) before comparison so users get one stable
+// match regardless of how the path was written.
+func LookupRepoOverride(global *Config, repoRoot string) (Config, bool) {
+	if global == nil || len(global.Repos) == 0 || repoRoot == "" {
+		return Config{}, false
+	}
+	target := canonicalRepoKey(repoRoot)
+	for raw, override := range global.Repos {
+		if canonicalRepoKey(raw) == target {
+			return override, true
+		}
+	}
+	return Config{}, false
+}
+
+func canonicalRepoKey(p string) string {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return p
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return resolved
+	}
+	return abs
 }
 
 func readFile(path string) (*Config, error) {
@@ -112,15 +148,21 @@ func readFile(path string) (*Config, error) {
 	return &cfg, nil
 }
 
-func mergeConfigs(global, repo *Config) *Config {
+func mergeConfigs(global, repo *Config, repoRoot string) *Config {
 	out := *global
+	out.Repos = nil
 
+	override, _ := LookupRepoOverride(global, repoRoot)
+
+	if override.Version != "" {
+		out.Version = override.Version
+	}
 	if repo.Version != "" {
 		out.Version = repo.Version
 	}
-	out.Defaults = mergeDefaults(global.Defaults, repo.Defaults)
-	out.Agentic = mergeAgentic(global.Agentic, repo.Agentic)
-	out.Hooks = mergeHooks(global.Hooks, repo.Hooks)
+	out.Defaults = mergeDefaults(mergeDefaults(global.Defaults, override.Defaults), repo.Defaults)
+	out.Agentic = mergeAgentic(mergeAgentic(global.Agentic, override.Agentic), repo.Agentic)
+	out.Hooks = mergeHooks(mergeHooks(global.Hooks, override.Hooks), repo.Hooks)
 
 	return &out
 }

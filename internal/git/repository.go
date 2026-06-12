@@ -42,19 +42,6 @@ func (r *Repository) RepoName() string {
 	return filepath.Base(r.mainWorktreePath)
 }
 
-// UserName returns the configured git user.name (may be empty).
-func (r *Repository) UserName() (string, error) {
-	out, err := runGit(r.mainWorktreePath, "config", "--get", "user.name")
-	if err != nil {
-		var exitErr *exec.ExitError
-		if stdErrors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
-			return "", nil
-		}
-		return "", err
-	}
-	return strings.TrimSpace(out), nil
-}
-
 // ListWorktrees parses `git worktree list --porcelain`.
 func (r *Repository) ListWorktrees() ([]Worktree, error) {
 	out, err := runGit(r.mainWorktreePath, "worktree", "list", "--porcelain")

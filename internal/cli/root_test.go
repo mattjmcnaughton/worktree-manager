@@ -13,7 +13,7 @@ func TestRootRegistersExpectedSubcommands(t *testing.T) {
 		got[c.Name()] = true
 	}
 
-	want := []string{"create", "delete", "list", "cd"}
+	want := []string{"create", "delete", "list", "pwd", "shell", "tmux"}
 	for _, name := range want {
 		if !got[name] {
 			t.Errorf("expected subcommand %q to be registered; got: %v", name, sortedKeys(got))
@@ -22,6 +22,9 @@ func TestRootRegistersExpectedSubcommands(t *testing.T) {
 
 	if got["example"] {
 		t.Errorf("expected example command to be removed; still registered")
+	}
+	if got["cd"] {
+		t.Errorf("expected cd command to be removed in favor of pwd; still registered")
 	}
 }
 

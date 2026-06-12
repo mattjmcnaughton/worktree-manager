@@ -107,6 +107,11 @@ func TestHasUnpushedCommitsNoUpstream(t *testing.T) {
 func initTestRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
+	// macOS resolves /var/folders -> /private/var/folders; git surfaces the
+	// resolved form, so the test anchors on it for consistent comparisons.
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = resolved
+	}
 	run := func(args ...string) {
 		t.Helper()
 		cmd := exec.Command("git", args...)

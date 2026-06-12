@@ -38,7 +38,9 @@ func NewRoot() *cobra.Command {
 		newCreateCmd(),
 		newDeleteCmd(),
 		newListCmd(),
-		newCdCmd(),
+		newPwdCmd(),
+		newShellCmd(),
+		newTmuxCmd(),
 	)
 
 	return root

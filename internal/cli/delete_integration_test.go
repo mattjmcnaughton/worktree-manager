@@ -15,7 +15,7 @@ func TestRunDeleteHappyPathKeepsBranchAndAgentic(t *testing.T) {
 	slug := "demo-task"
 	wtPath := worktreePathFor(repoDir, slug)
 	agenticPath := filepath.Join(repoDir, ".agentic", slug)
-	taskPath := filepath.Join(repoDir, ".worktree-manager", "tasks", slug+".json")
+	taskPath := taskFilePath(t, repoDir, slug)
 
 	var buf bytes.Buffer
 	if err := runDelete(deleteOpts{Slug: slug}, repoDir, &buf); err != nil {

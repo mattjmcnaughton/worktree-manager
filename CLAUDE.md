@@ -12,6 +12,7 @@ Go CLI using Cobra, Viper, slog, and Go toolchain (gofmt, go vet, go test).
 | `just fmt-fix` | Fix formatting |
 | `just vet` | Run go vet |
 | `just test` | Run unit tests |
+| `just test-one <name> [pkg]` | Run a single test by name regex (default pkg: `./...`) |
 | `just test-integration` | Run integration tests |
 | `just test-all` | Run all tests |
 | `just build` | Build binary to bin/ |

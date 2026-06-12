@@ -8,29 +8,29 @@ import (
 	"testing"
 )
 
-func TestRunCdPrintsAbsoluteWorktreePath(t *testing.T) {
+func TestRunPwdPrintsAbsoluteWorktreePath(t *testing.T) {
 	repoDir := setupRepoWithCreate(t, "")
 	slug := "demo-task"
 	want := worktreePathFor(repoDir, slug)
 
 	var buf bytes.Buffer
-	if err := runCd(slug, repoDir, &buf); err != nil {
-		t.Fatalf("runCd: %v", err)
+	if err := runPwd(slug, repoDir, &buf); err != nil {
+		t.Fatalf("runPwd: %v", err)
 	}
 	got := strings.TrimRight(buf.String(), "\n")
 	if got != want {
-		t.Errorf("runCd output = %q, want %q", got, want)
+		t.Errorf("runPwd output = %q, want %q", got, want)
 	}
 	if strings.Count(buf.String(), "\n") > 1 {
 		t.Errorf("expected single line output; got %q", buf.String())
 	}
 }
 
-func TestRunCdUnknownSlugErrors(t *testing.T) {
+func TestRunPwdUnknownSlugErrors(t *testing.T) {
 	repoDir := initTestRepo(t)
 
 	var buf bytes.Buffer
-	err := runCd("no-such-slug", repoDir, &buf)
+	err := runPwd("no-such-slug", repoDir, &buf)
 	if err == nil {
 		t.Fatalf("expected error for unknown slug")
 	}

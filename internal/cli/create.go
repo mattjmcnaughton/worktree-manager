@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/user"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
@@ -68,7 +69,7 @@ func runCreate(opts createOpts, startDir string, out io.Writer) error {
 		return err
 	}
 	if cfg.Defaults.User == "" {
-		if name, err := repo.UserName(); err == nil && name != "" {
+		if name := resolveSystemUser(); name != "" {
 			if normalized, nerr := slug.Normalize(name); nerr == nil {
 				cfg.Defaults.User = normalized
 			}
@@ -92,9 +93,6 @@ func runCreate(opts createOpts, startDir string, out io.Writer) error {
 	}
 
 	store := task.NewStore(repoRoot)
-	if err := store.EnsureGitignore(); err != nil {
-		return err
-	}
 
 	executor := hooks.NewExecutor(cfg, repoRoot)
 	hookCtx := hooks.Context{
@@ -168,13 +166,41 @@ func agenticOverride(opts createOpts) *bool {
 	return nil
 }
 
+// resolveSystemUser returns the OS-level username. $USER wins so callers can
+// override (containers without /etc/passwd, shells with a custom value); falls
+// back to os/user.Current() when the env var is unset.
+func resolveSystemUser() string {
+	if env := os.Getenv("USER"); env != "" {
+		return env
+	}
+	if u, err := user.Current(); err == nil {
+		return u.Username
+	}
+	return ""
+}
+
 func loadRepoConfig(repoRoot string) (*config.Config, error) {
 	repoPath := filepath.Join(repoRoot, ".worktree-manager.yml")
 	globalPath := ""
-	if home, err := os.UserHomeDir(); err == nil {
-		globalPath = filepath.Join(home, ".config", "worktree-manager", "config.yml")
+	if dir, err := globalConfigDir(); err == nil {
+		globalPath = filepath.Join(dir, "worktree-manager", "config.yml")
 	}
-	return config.Load(globalPath, repoPath)
+	return config.Load(globalPath, repoPath, repoRoot)
+}
+
+// globalConfigDir resolves the directory holding the global config file.
+// $XDG_CONFIG_HOME wins (per the XDG Base Directory spec, cross-platform);
+// otherwise we fall back to ~/.config so users see the same path on Linux and
+// macOS without needing to touch ~/Library/Application Support.
+func globalConfigDir() (string, error) {
+	if v := os.Getenv("XDG_CONFIG_HOME"); v != "" {
+		return v, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".config"), nil
 }
 
 func printCreateSummary(out io.Writer, res resolver.Resolved) {
